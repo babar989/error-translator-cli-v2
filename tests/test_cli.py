@@ -408,6 +408,8 @@ def test_first_run_creates_flag(monkeypatch, tmp_path, capsys):
     from error_translator.cli import main
 
     monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
+    monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+    monkeypatch.delenv("APPDATA", raising=False)
     monkeypatch.setattr(sys, "argv", ["explain-error", "KeyError: 'x'"])
     monkeypatch.setattr(sys.stdin, "isatty", lambda: True)
     monkeypatch.setattr(sys.stdout, "isatty", lambda: True)
