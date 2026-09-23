@@ -24,10 +24,27 @@ def test_custom_exc(mock_auto_tb, mock_translate, capsys):
 
     custom_exc(mock_shell, Exception, mock_evalue, mock_tb)
 
-    mock_auto_tb.assert_called_once_with(mode="plain", theme_name="NoColor")
+    mock_auto_tb.assert_called_once_with(mode="Plain", theme_name="NoColor")
     mock_tb_instance.text.assert_called_once_with(Exception, mock_evalue, mock_tb)
     mock_translate.assert_called_once_with("raw traceback text")
 
     captured = capsys.readouterr()
     assert "Error: Test explanation" in captured.out
     assert "Fix: Test fix" in captured.out
+
+
+def test_custom_exc_survives_real_exception():
+    from IPython.testing.globalipapp import get_ipython
+
+    from error_translator.jupyter import custom_exc, load_ipython_extension
+
+    ip = get_ipython()
+    load_ipython_extension(ip)
+    ip.run_cell("1/0")
+    # IPython unregisters a handler that raised; assert ours is still active.
+    assert ip.CustomTB is custom_exc or (
+        hasattr(ip.CustomTB, "__closure__")
+        and ip.CustomTB.__closure__ is not None
+        and ip.CustomTB.__closure__[0].cell_contents is custom_exc
+    )
+    assert ip.custom_exceptions == (Exception,)

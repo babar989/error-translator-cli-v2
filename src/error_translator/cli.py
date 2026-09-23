@@ -28,8 +28,16 @@ def check_first_run(as_json: bool):
     # Do not show welcome banner if outputting JSON or part of a pipeline
     if as_json or not sys.stdout.isatty():
         return
+    import os
 
-    config_dir = Path.home() / ".config" / "error-translator"
+    if os.environ.get("XDG_CONFIG_HOME"):
+        config_dir = Path(os.environ["XDG_CONFIG_HOME"])
+    elif sys.platform == "win32" and os.environ.get("APPDATA"):
+        config_dir = Path(os.environ["APPDATA"])
+    else:
+        config_dir = Path.home() / ".config"
+
+    config_dir = config_dir / "error-translator"
     flag_file = config_dir / ".initialized"
 
     if not flag_file.exists():
@@ -58,6 +66,13 @@ def check_first_run(as_json: bool):
             # Can't write the ~/.config flag file (read-only home, etc.).
             # Not fatal — just skip the welcome banner.
             pass
+
+
+def _prompt(text: str = "") -> str:
+    if text:
+        sys.stderr.write(text)
+        sys.stderr.flush()
+    return input()
 
 
 def run_interactive_session(as_json: bool = False):
@@ -91,9 +106,10 @@ def run_interactive_session(as_json: bool = False):
 
     while True:
         try:
-            first_line = input("Enter error: ")
+            first_line = _prompt("Enter error: ")
         except (EOFError, KeyboardInterrupt):
-            console.print()
+            if not as_json:
+                console.print()
             break
 
         stripped = first_line.strip()
@@ -109,7 +125,7 @@ def run_interactive_session(as_json: bool = False):
         interrupted = False
         while True:
             try:
-                line = input()
+                line = _prompt()
             except EOFError:
                 break
             except KeyboardInterrupt:
@@ -120,7 +136,8 @@ def run_interactive_session(as_json: bool = False):
             lines.append(line)
 
         if interrupted:
-            console.print()
+            if not as_json:
+                console.print()
             break
 
         error_text = "\n".join(lines)
@@ -143,7 +160,7 @@ def main():
         description="Error Translator — Deterministic Python traceback analysis and exception diagnostics.",
         epilog="""
 Examples:
-  explain-error run my_script.py
+  explain-error run my_script.py --input data.csv --verbose
   explain-error "NameError: name 'usr_count' is not defined"
   cat error.log | explain-error
   explain-error interactive
@@ -167,12 +184,9 @@ Examples:
     parser.add_argument(
         "-h", "--help", action="store_true", help="Help user through documentation."
     )
-    parser.add_argument("args", nargs="*", help="Positional arguments.")
+    parser.add_argument("args", nargs=argparse.REMAINDER, help="Positional arguments.")
 
     parsed_args = parser.parse_args()
-
-    # Check for first run before executing commands
-    check_first_run(getattr(parsed_args, "as_json", False))
 
     # Handle meta-flags
     if parsed_args.about:
@@ -188,8 +202,55 @@ Examples:
         print_help()
         sys.exit(0)
 
+    if not parsed_args.args and sys.stdin.isatty():
+        print_help()
+        sys.exit(1)
+
+    # Check for first run before executing commands
+    check_first_run(getattr(parsed_args, "as_json", False))
+
     # Choose output strategy
     emit = print_result_json if parsed_args.as_json else print_result
+
+    if parsed_args.args:
+        # Detect the "run <script.py>" sub-command
+        if parsed_args.args[0] == "run" and len(parsed_args.args) > 1:
+            script_name = parsed_args.args[1]
+            script_args = parsed_args.args[2:]
+            sys.exit(run_script(script_name, script_args, as_json=parsed_args.as_json))
+        elif parsed_args.args[0] == "interactive":
+            run_interactive_session(as_json=parsed_args.as_json)
+        elif len(parsed_args.args) == 1 and parsed_args.args[0] == "-":
+            error_input = sys.stdin.read()
+            if error_input.strip():
+                emit(translate_error(error_input))
+        else:
+            # Otherwise, treat the entire string of arguments as a raw traceback text
+            path = Path(parsed_args.args[0])
+            if path.is_file():
+                if path.suffix == ".py":
+                    sys.exit(
+                        run_script(str(path), parsed_args.args[1:], as_json=parsed_args.as_json)
+                    )
+                elif len(parsed_args.args) == 1:
+                    try:
+                        error_input = path.read_text(encoding="utf-8")
+                    except (OSError, UnicodeDecodeError) as exc:
+                        print_execution_error(
+                            str(path),
+                            f"Could not read file '{path}': {exc}",
+                            parsed_args.as_json,
+                            "File Error",
+                        )
+                        sys.exit(1)
+                    if error_input.strip():
+                        emit(translate_error(error_input))
+                        return
+
+            error_input = " ".join(parsed_args.args)
+            emit(translate_error(error_input))
+
+        return
 
     # Handle piped input (e.g. `cat error.log | explain-error`)
     if not sys.stdin.isatty():
@@ -199,35 +260,8 @@ Examples:
             return
 
     # Provide help if no arguments are passed
-    if not parsed_args.args:
-        print_help()
-        sys.exit(1)
-
-    # Detect the "run <script.py>" sub-command
-    if parsed_args.args[0] == "run" and len(parsed_args.args) > 1:
-        script_name = parsed_args.args[1]
-        run_script(script_name, as_json=parsed_args.as_json)
-    elif parsed_args.args[0] == "interactive":
-        run_interactive_session(as_json=parsed_args.as_json)
-    else:
-        # Otherwise, treat the entire string of arguments as a raw traceback text
-        if len(parsed_args.args) == 1:
-            try:
-                path = Path(parsed_args.args[0])
-                if path.is_file():
-                    if path.suffix == ".py":
-                        run_script(str(path), as_json=parsed_args.as_json)
-                        return
-                    else:
-                        error_input = path.read_text(encoding="utf-8")
-                        if error_input.strip():
-                            emit(translate_error(error_input))
-                            return
-            except Exception:
-                pass
-
-        error_input = " ".join(parsed_args.args)
-        emit(translate_error(error_input))
+    print_help()
+    sys.exit(1)
 
 
 if __name__ == "__main__":
