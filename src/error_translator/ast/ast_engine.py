@@ -43,6 +43,10 @@ class ScopedSymbolCollector(ast.NodeVisitor):
         else:
             self.generic_visit(node)
 
+    def visit_AsyncFunctionDef(self, node):
+        """Treat async functions exactly like sync functions for scoping."""
+        self.visit_FunctionDef(node)
+
     def visit_ClassDef(self, node):
         """
         Collects the class name into the current scope.

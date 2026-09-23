@@ -5,28 +5,46 @@ Responsible for running target Python scripts and intercepting their output.
 
 import subprocess
 import sys
+from typing import Optional
 
 from .core import translate_error
 from .ui import print_execution_error, print_result, print_result_json
 
 
-def run_script(script_name: str, *, as_json: bool = False):
+def run_script(
+    script_name: str, script_args: Optional[list] = None, *, as_json: bool = False
+) -> int:
     """
     Run a target Python script and dynamically intercept/translate traceback output if it fails.
 
     Args:
         script_name (str): The script to run.
+        script_args (list, optional): Extra arguments to pass to the script.
         as_json (bool): Whether to output the error translation in JSON format instead of Rich UI.
+
+    Returns:
+        int: The exit code of the script or the runner.
     """
+    if script_args is None:
+        script_args = []
+
     try:
+        from pathlib import Path
+
+        if not Path(script_name).is_file():
+            raise FileNotFoundError()
+
         # check=False is intentional: we handle both success (returncode==0)
         # and failure (non-zero returncode) paths explicitly below.
         # Run the script and capture stdout and stderr
-        result = subprocess.run([sys.executable, script_name], capture_output=True, text=True)
+        result = subprocess.run(
+            [sys.executable, script_name, *script_args], capture_output=True, text=True
+        )
 
         if result.returncode == 0:
             # Script succeeded, just print its normal output
             print(result.stdout, end="")
+            return 0
         else:
             # Script failed, print partial stdout and translate the error output
             if result.stdout:
@@ -38,12 +56,18 @@ def run_script(script_name: str, *, as_json: bool = False):
             else:
                 print_result(translation)
 
+            if 1 <= result.returncode <= 255:
+                return result.returncode
+            return 1
+
     except FileNotFoundError:
         # Handling the case where the provided script doesn't exist
         print_execution_error(
             script_name, f"Could not find script '{script_name}'", as_json, "Execution Error"
         )
+        return 127
     except Exception as exc:
         # Catch-all for unexpected runtime issues with the sub-process
         # Surfaced to the user so they see *something* went wrong.
         print_execution_error(script_name, str(exc), as_json, "Runtime Error")
+        return 1

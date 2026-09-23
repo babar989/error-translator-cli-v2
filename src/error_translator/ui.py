@@ -117,6 +117,9 @@ def print_help():
     cli_table.add_row(
         "cat error.log | explain-error", "Translate tracebacks piped via standard input (stdin)."
     )
+    cli_table.add_row(
+        "cat error.log | explain-error -", "Explicitly read and translate from standard input."
+    )
 
     console.print(
         Panel(

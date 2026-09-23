@@ -8,7 +8,7 @@ This module is responsible for:
 """
 
 from .ast.ast_handlers import AST_REGISTRY
-from .parser import extract_code_context, extract_location
+from .parser import extract_code_context, extract_error_line, extract_location
 from .rules import compiled_rules, load_rules
 
 # Attempt to load the native C extension for rule matching,
@@ -43,8 +43,8 @@ def translate_error(traceback_text: str) -> dict:
     if not lines:
         return {"explanation": "No error text provided.", "fix": "Provide a valid Python error."}
 
-    # The actual error message is typically the last line in a traceback
-    actual_error_line = lines[-1]
+    # Extract the actual error message
+    actual_error_line = extract_error_line(traceback_text)
 
     # Extract the origin of the error (file name and line number)
     file_name, line_number = extract_location(traceback_text)

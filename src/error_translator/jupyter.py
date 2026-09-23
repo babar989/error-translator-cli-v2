@@ -18,40 +18,46 @@ def custom_exc(shell, etype, evalue, tb, tb_offset=None):
     # 1. Print standard Jupyter traceback
     shell.showtraceback((etype, evalue, tb), tb_offset=tb_offset)
 
-    # 2. Extract raw traceback text
-    if AutoFormattedTB:
-        tb_formatter = AutoFormattedTB(mode="plain", theme_name="NoColor")
-        raw_traceback = tb_formatter.text(etype, evalue, tb)
-    else:
-        raw_traceback = "".join(traceback.format_exception(etype, evalue, tb))
-
-    # 3. Translate error
-    translation = translate_error(raw_traceback)
-
-    explanation = translation.get("explanation", "Unable to translate this error.")
-    fix = translation.get("fix", "No remediation suggestion available.")
-    detected_error = translation.get("matched_error", "Unknown error")
-    ast_insight = translation.get("ast_insight")
-
-    # Print summary to stdout
-    print(f"Error: {explanation}")
-    print(f"Fix: {fix}")
-
-    # Build Markdown diagnostic panel for notebook UI
-    md_text = "---\n"
-    md_text += "### Error Translator Diagnostic\n\n"
-    md_text += f"**Detected Error:** `{detected_error}`\n\n"
-    md_text += f"**Explanation:** {explanation}\n\n"
-    md_text += f"**Suggested Fix:** {fix}\n\n"
-
-    if ast_insight:
-        md_text += f"**AST Insight:** {ast_insight}\n\n"
-
-    md_text += "---\n"
-
     try:
-        display(Markdown(md_text))
-    except NameError:
+        # 2. Extract raw traceback text
+        try:
+            if AutoFormattedTB:
+                tb_formatter = AutoFormattedTB(mode="Plain", theme_name="NoColor")
+                raw_traceback = tb_formatter.text(etype, evalue, tb)
+            else:
+                raw_traceback = "".join(traceback.format_exception(etype, evalue, tb))
+        except Exception:
+            raw_traceback = "".join(traceback.format_exception(etype, evalue, tb))
+
+        # 3. Translate error
+        translation = translate_error(raw_traceback)
+
+        explanation = translation.get("explanation", "Unable to translate this error.")
+        fix = translation.get("fix", "No remediation suggestion available.")
+        detected_error = translation.get("matched_error", "Unknown error")
+        ast_insight = translation.get("ast_insight")
+
+        # Print summary to stdout
+        print(f"Error: {explanation}")
+        print(f"Fix: {fix}")
+
+        # Build Markdown diagnostic panel for notebook UI
+        md_text = "---\n"
+        md_text += "### Error Translator Diagnostic\n\n"
+        md_text += f"**Detected Error:** `{detected_error}`\n\n"
+        md_text += f"**Explanation:** {explanation}\n\n"
+        md_text += f"**Suggested Fix:** {fix}\n\n"
+
+        if ast_insight:
+            md_text += f"**AST Insight:** {ast_insight}\n\n"
+
+        md_text += "---\n"
+
+        try:
+            display(Markdown(md_text))
+        except NameError:
+            pass
+    except Exception:
         pass
 
 

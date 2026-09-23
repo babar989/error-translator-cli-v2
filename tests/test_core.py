@@ -438,3 +438,155 @@ def test_interactive_subcommand_is_wired_into_main(monkeypatch):
 
     assert called.get("hit") is True
     assert called.get("as_json") is False
+
+
+# --- 4. PARSER TESTS ---
+
+
+def test_extract_location_two_frames_same_file():
+    from error_translator.parser import extract_location
+
+    tb = """Traceback (most recent call last):
+  File "app.py", line 10, in <module>
+    outer()
+  File "app.py", line 5, in outer
+    raise ValueError
+ValueError"""
+    file_path, line_num = extract_location(tb)
+    assert file_path == "app.py"
+    assert line_num == "5"
+
+
+def test_extract_location_stdlib_innermost_prioritizes_user_code(monkeypatch, tmp_path):
+    from error_translator.parser import extract_location
+
+    # Mock current working directory to a specific path
+    monkeypatch.chdir(tmp_path)
+
+    # create a traceback where the user's file is the first frame, and a stdlib-looking absolute path is the second frame
+    user_file = "my_app.py"
+    stdlib_file = "/usr/lib/python3.10/json/decoder.py"
+
+    tb = f"""Traceback (most recent call last):
+  File "{user_file}", line 42, in <module>
+    json.loads("invalid")
+  File "{stdlib_file}", line 355, in raw_decode
+    raise JSONDecodeError
+json.decoder.JSONDecodeError"""
+
+    file_path, line_num = extract_location(tb)
+    assert file_path == user_file
+    assert line_num == "42"
+
+
+def test_extract_location_no_match():
+    from error_translator.parser import extract_location
+
+    tb = "Some random text without File ... line ... pattern"
+    file_path, line_num = extract_location(tb)
+    assert file_path == "Unknown File"
+    assert line_num == "Unknown Line"
+
+
+def test_translate_error_integration_nested_traceback(monkeypatch, tmp_path):
+    from error_translator.core import translate_error
+
+    monkeypatch.chdir(tmp_path)
+
+    # Traceback generated from the `nested.py` scenario mentioned by user
+    tb = """Traceback (most recent call last):
+  File "nested.py", line 4, in <module>
+    outer()
+  File "nested.py", line 3, in outer
+    config = json.loads("not valid json")
+  File "/usr/lib/python3.10/json/__init__.py", line 346, in loads
+    return _default_decoder.decode(s)
+  File "/usr/lib/python3.10/json/decoder.py", line 337, in decode
+    obj, end = self.raw_decode(s, idx=_w(s, 0).end())
+  File "/usr/lib/python3.10/json/decoder.py", line 355, in raw_decode
+    raise JSONDecodeError("Expecting value", s, err.value) from None
+json.decoder.JSONDecodeError: Expecting value: line 1 column 1 (char 0)"""
+
+    result = translate_error(tb)
+    assert result["file"] == "nested.py"
+    assert result["line"] == "3"
+
+
+def test_trailing_non_exception_noise():
+    mock_traceback = """Traceback (most recent call last):
+  File "/tmp/x.py", line 2, in <module>
+    print(a/0)
+ZeroDivisionError: division by zero
+SomeFramework: session torn down"""
+    result = translate_error(mock_traceback)
+    assert result["matched_error"] == "ZeroDivisionError: division by zero"
+    assert "divide a number by zero" in result["explanation"]
+
+
+def test_no_exception_shaped_line_fallback():
+    mock_traceback = "Just some plain text without any exception shape."
+    result = translate_error(mock_traceback)
+    assert result["matched_error"] == "Just some plain text without any exception shape."
+    assert "unknown error" in result["explanation"]
+
+
+def test_chained_exception_prioritizes_last():
+    mock_traceback = """Traceback (most recent call last):
+  File "x.py", line 2, in <module>
+    raise ValueError("first")
+ValueError: first
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "x.py", line 4, in <module>
+    raise KeyError("second")
+KeyError: 'second'"""
+    result = translate_error(mock_traceback)
+    assert result["matched_error"] == "KeyError: 'second'"
+    assert "second" in result["explanation"]
+
+
+def test_bare_keyboard_interrupt():
+    mock_traceback = """Traceback (most recent call last):
+  File "x.py", line 2, in <module>
+    time.sleep(1)
+KeyboardInterrupt"""
+    result = translate_error(mock_traceback)
+    assert result["matched_error"] == "KeyboardInterrupt"
+    assert (
+        "KeyboardInterrupt" in result["explanation"]
+        or "interrupted the program" in result["explanation"]
+        or "unknown error" in result["explanation"]
+    )  # Depending on whether there's a rule
+
+
+def test_dotted_exception_name_is_chosen():
+    mock_traceback = """Traceback (most recent call last):
+  File "x.py", line 2, in <module>
+    json.loads("{")
+json.decoder.JSONDecodeError: Expecting property name enclosed in double quotes: line 1 column 2 (char 1)"""
+    result = translate_error(mock_traceback)
+    assert (
+        result["matched_error"]
+        == "json.decoder.JSONDecodeError: Expecting property name enclosed in double quotes: line 1 column 2 (char 1)"
+    )
+
+
+def test_multiline_exception_message():
+    mock_traceback = """Traceback (most recent call last):
+  File "x.py", line 2, in <module>
+    raise SomeError("first part\\nsecond part")
+SomeError: first part
+second part"""
+    result = translate_error(mock_traceback)
+    assert result["matched_error"] == "SomeError: first part"
+
+
+def test_extract_error_line_helper_unit_tests():
+    from error_translator.parser import extract_error_line
+
+    assert extract_error_line("") == ""
+    assert extract_error_line("   \n  ") == ""
+    assert extract_error_line("KeyError: 'x'") == "KeyError: 'x'"
+    assert extract_error_line("  KeyError: 'x'  ") == "KeyError: 'x'"
